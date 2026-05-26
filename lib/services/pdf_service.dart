@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -198,24 +199,36 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 6) PDF → WORD (.docx) — layout-aware text extraction
+  // 6) PDF → WORD (.docx) — line-by-line extract + spec-compliant docx
   // ==========================================================================
   static Future<String> pdfToWord(File input) async {
     final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
     final extractor = sf.PdfTextExtractor(doc);
-    final buf = StringBuffer();
+    final allLines = <String>[];
+
     for (var i = 0; i < doc.pages.count; i++) {
-      // layoutText:true preserves positional text (catches everything).
-      final pageText = extractor.extractText(
+      // extractTextLines preserves line ordering even with positioned text.
+      final lines = extractor.extractTextLines(
         startPageIndex: i,
         endPageIndex: i,
-        layoutText: true,
       );
-      buf.writeln(pageText);
-      if (i < doc.pages.count - 1) buf.writeln();
+      for (final line in lines) {
+        final t = line.text.trim();
+        if (t.isNotEmpty) allLines.add(t);
+      }
+      if (i < doc.pages.count - 1) {
+        allLines.add(''); // page break marker
+      }
     }
     doc.dispose();
-    final docxBytes = _buildMinimalDocx(buf.toString());
+
+    if (allLines.isEmpty) {
+      throw const FormatException(
+        'No extractable text found. Scanned PDFs need OCR (not supported offline yet).',
+      );
+    }
+
+    final docxBytes = _buildSpecCompliantDocx(allLines);
     return _writeOut(docxBytes, prefix: 'pdf_to_word', extension: 'docx');
   }
 
@@ -301,51 +314,97 @@ class PdfService {
     return path;
   }
 
-  static Uint8List _buildMinimalDocx(String text) {
+  /// Builds a spec-compliant .docx zip that opens cleanly in MS Word, Google
+  /// Docs, and LibreOffice. Includes proper namespaces, sectPr, rels, and
+  /// a styles part — the bare minimum strict parsers expect.
+  static Uint8List _buildSpecCompliantDocx(List<String> lines) {
     String esc(String s) => s
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;');
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
 
-    final paragraphs = text.split('\n').map((line) {
-      return '<w:p><w:r><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>';
+    final paragraphs = lines.map((line) {
+      if (line.isEmpty) {
+        return '<w:p><w:pPr><w:pageBreakBefore/></w:pPr></w:p>';
+      }
+      return '<w:p>'
+          '<w:r>'
+          '<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr>'
+          '<w:t xml:space="preserve">${esc(line)}</w:t>'
+          '</w:r>'
+          '</w:p>';
     }).join();
 
-    final documentXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>$paragraphs</w:body>
-</w:document>''';
+    final documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+        'mc:Ignorable="w14" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+        '<w:body>'
+        '$paragraphs'
+        '<w:sectPr>'
+        '<w:pgSz w:w="12240" w:h="15840"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
+        '<w:cols w:space="720"/>'
+        '<w:docGrid w:linePitch="360"/>'
+        '</w:sectPr>'
+        '</w:body>'
+        '</w:document>';
 
-    const contentTypesXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>''';
+    const stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:docDefaults>'
+        '<w:rPrDefault>'
+        '<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="22"/></w:rPr>'
+        '</w:rPrDefault>'
+        '</w:docDefaults>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/>'
+        '<w:qFormat/>'
+        '</w:style>'
+        '</w:styles>';
 
-    const relsXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>''';
+    const contentTypesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+        '</Types>';
+
+    const packageRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '</Relationships>';
+
+    const documentRelsXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        '</Relationships>';
+
+    void add(Archive a, String path, String content) {
+      final bytes = utf8.encode(content);
+      a.addFile(ArchiveFile(path, bytes.length, bytes));
+    }
 
     final archive = Archive();
-    archive.addFile(ArchiveFile(
-      '[Content_Types].xml',
-      contentTypesXml.length,
-      contentTypesXml.codeUnits,
-    ));
-    archive.addFile(ArchiveFile(
-      '_rels/.rels',
-      relsXml.length,
-      relsXml.codeUnits,
-    ));
-    archive.addFile(ArchiveFile(
-      'word/document.xml',
-      documentXml.length,
-      documentXml.codeUnits,
-    ));
+    add(archive, '[Content_Types].xml', contentTypesXml);
+    add(archive, '_rels/.rels', packageRelsXml);
+    add(archive, 'word/_rels/document.xml.rels', documentRelsXml);
+    add(archive, 'word/document.xml', documentXml);
+    add(archive, 'word/styles.xml', stylesXml);
 
     return Uint8List.fromList(ZipEncoder().encode(archive)!);
+  }
+
+  // ignore: unused_element
+  static Uint8List _buildMinimalDocx(String text) {
+    return _buildSpecCompliantDocx(text.split('\n'));
   }
 
   static String _extractDocxText(String xml) {
