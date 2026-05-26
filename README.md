@@ -8,9 +8,15 @@ Built with Flutter, monetized with AdMob (banner + interstitial). Designed for e
 
 ## ✨ Features
 
-- **Image to PDF** — Pick photos, reorder by drag, convert to a single A4 PDF. Each image becomes one page, fitted with aspect ratio preserved.
-- **Merge PDF** — Pick multiple PDFs, drag to reorder, merge into one. Powered by Syncfusion PDF.
-- **Compress PDF** — Three quality levels (Low/Medium/High). Re-encodes embedded images as JPEG at lower quality + applies Flate compression. Real bytes-saved measurement.
+- **Image to PDF** — Pick photos, reorder by drag, convert to a single A4 PDF.
+- **Merge PDF** — Pick multiple PDFs, drag to reorder, merge into one.
+- **Split PDF** — Pick a PDF, choose page range (e.g. pages 3-7), extract.
+- **Compress PDF** — Three quality levels (Low/Medium/High). Real bytes-saved measurement with image re-encoding.
+- **PDF to Image** — Rasterize each page as a JPG. Grid view of all pages, share all at once.
+- **Image to PDF** — covered above.
+- **PDF to Word** — Extract text into a `.docx` file. Text-only fidelity (no layout/images/tables).
+- **Word to PDF** — Read text from a `.docx` and render to PDF. Text-only.
+- **Lock PDF** — Add AES-128 password protection (open + permissions).
 - **Open + Share** results directly from each screen.
 - **AdMob monetization** — banner on every screen + interstitial on tool open. Test IDs included for safe development.
 
@@ -101,11 +107,13 @@ Same for iOS in `ios/Runner/Info.plist` (`GADApplicationIdentifier`).
 
 ---
 
-## 📦 Dependencies Notes
+## ⚠️ Format Conversion Caveats (Honest Disclosure)
 
-- **Syncfusion PDF** is free for individual developers and small businesses under the [Community License](https://www.syncfusion.com/products/communitylicense). No license key needed unless you're a 5+ developer team or earn >$1M/year.
-- **`pdf` package** is MIT and used purely for image-to-PDF generation.
-- **`image` package** is used internally for JPEG re-encoding during compression.
+- **PDF → Word** uses Syncfusion `PdfTextExtractor` + builds a minimal valid `.docx`. **Text only.** Layout, images, tables, and fonts are dropped.
+- **Word → PDF** parses `word/document.xml` from the `.docx` zip and renders text via the `pdf` package. **Text only.** Same caveat.
+- For full-fidelity PDF↔Word, you need cloud APIs (CloudConvert, ILovePDF) or a server-side LibreOffice headless conversion. Both cost money and require backend infrastructure. This app is fully offline and free.
+- **Use cases that work well:** plain CVs, simple letters, meeting notes, paper text drafts.
+- **Use cases that don't work well:** invoices with tables, brochures, formatted reports, anything with embedded images.
 
 ---
 

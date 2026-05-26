@@ -1,16 +1,22 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui';
 
+import 'package:archive/archive.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 
 enum CompressionLevel { low, medium, high }
 
 class PdfService {
-  /// Convert images into a single PDF (one image per page, fitted to page).
+  // ==========================================================================
+  // 1) IMAGE → PDF
+  // ==========================================================================
   static Future<String> imagesToPdf(List<File> images) async {
     final doc = pw.Document();
     for (final f in images) {
@@ -25,19 +31,14 @@ class PdfService {
         ),
       );
     }
-    final outDir = await _outputDir();
-    final outPath =
-        '${outDir.path}/images_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final file = File(outPath);
-    await file.writeAsBytes(await doc.save());
-    return outPath;
+    return _writeOut(await doc.save(), prefix: 'images');
   }
 
-  /// Merge multiple PDFs in order using Syncfusion's PdfDocument.
+  // ==========================================================================
+  // 2) MERGE PDF
+  // ==========================================================================
   static Future<String> mergePdfs(List<File> pdfs) async {
     final merged = sf.PdfDocument();
-    // Syncfusion's PdfDocumentBase requires removing the default empty page.
-    // The freshly created PdfDocument has zero pages, so this is fine.
     for (final f in pdfs) {
       final source = sf.PdfDocument(inputBytes: await f.readAsBytes());
       sf.PdfDocumentBase.merge(merged, [source]);
@@ -45,35 +46,64 @@ class PdfService {
     }
     final bytes = await merged.save();
     merged.dispose();
-    final outDir = await _outputDir();
-    final outPath =
-        '${outDir.path}/merged_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final file = File(outPath);
-    await file.writeAsBytes(bytes);
-    return outPath;
+    return _writeOut(Uint8List.fromList(bytes), prefix: 'merged');
   }
 
-  /// Compress a PDF using Syncfusion's compression + image downsampling.
-  ///
-  /// The Syncfusion library handles content-stream compression automatically.
-  /// We additionally walk every page and re-encode raster images at lower
-  /// quality to actually shrink the file.
+  // ==========================================================================
+  // 3) SPLIT PDF — extract a page range into a new PDF
+  // ==========================================================================
+  /// Splits the input PDF and returns a new PDF containing only the pages in
+  /// the inclusive range [startPage, endPage]. Pages are 1-indexed.
+  static Future<String> splitPdf(File input, int startPage, int endPage) async {
+    final bytes = await input.readAsBytes();
+    final src = sf.PdfDocument(inputBytes: bytes);
+    final total = src.pages.count;
+    if (startPage < 1 || endPage > total || startPage > endPage) {
+      src.dispose();
+      throw ArgumentError(
+        'Invalid range: $startPage–$endPage (PDF has $total pages).',
+      );
+    }
+
+    final newDoc = sf.PdfDocument();
+    for (var i = startPage - 1; i <= endPage - 1; i++) {
+      final srcPage = src.pages[i];
+      final template = srcPage.createTemplate();
+      final size = srcPage.size;
+      final newPage = newDoc.pages.add();
+      newPage.graphics.drawPdfTemplate(
+        template,
+        Offset.zero,
+        Size(size.width, size.height),
+      );
+    }
+    final outBytes = await newDoc.save();
+    newDoc.dispose();
+    src.dispose();
+    return _writeOut(
+      Uint8List.fromList(outBytes),
+      prefix: 'split_${startPage}-$endPage',
+    );
+  }
+
+  /// Returns the page count of a PDF — useful for the split UI.
+  static Future<int> pageCount(File input) async {
+    final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
+    final n = doc.pages.count;
+    doc.dispose();
+    return n;
+  }
+
+  // ==========================================================================
+  // 4) COMPRESS PDF — Syncfusion stream compression + image re-encoding
+  // ==========================================================================
   static Future<String> compressPdf(
     File input, {
     CompressionLevel level = CompressionLevel.medium,
   }) async {
     final original = await input.readAsBytes();
     final doc = sf.PdfDocument(inputBytes: original);
-
-    // Set compression policy. Syncfusion will use Flate on content streams.
     doc.compressionLevel = sf.PdfCompressionLevel.best;
-    if (level == CompressionLevel.high) {
-      doc.compressionLevel = sf.PdfCompressionLevel.best;
-    } else if (level == CompressionLevel.medium) {
-      doc.compressionLevel = sf.PdfCompressionLevel.normal;
-    } else {
-      doc.compressionLevel = sf.PdfCompressionLevel.normal;
-    }
 
     final imgQuality = switch (level) {
       CompressionLevel.low => 88,
@@ -86,15 +116,11 @@ class PdfService {
       CompressionLevel.high => 960,
     };
 
-    // Re-encode embedded images on every page.
     for (var i = 0; i < doc.pages.count; i++) {
       final page = doc.pages[i];
       final extractor = sf.PdfImageExtractor(doc);
       final extracted = extractor.extractImages(i);
       if (extracted == null || extracted.isEmpty) continue;
-
-      // Replace each image with a compressed JPEG.
-      // Note: Syncfusion's image-replace API is index-based per page.
       for (var j = 0; j < extracted.length; j++) {
         try {
           final src = img.decodeImage(extracted[j]);
@@ -108,31 +134,221 @@ class PdfService {
             img.encodeJpg(resized, quality: imgQuality),
           );
           page.replaceImage(j, sf.PdfBitmap(encoded));
-        } catch (_) {
-          // Some image types (e.g. masked indexed images) are not replaceable;
-          // skip them and let stream compression do what it can.
-        }
+        } catch (_) {}
       }
     }
-
     final bytes = await doc.save();
     doc.dispose();
-
-    final outDir = await _outputDir();
-    final outPath =
-        '${outDir.path}/compressed_${DateTime.now().millisecondsSinceEpoch}.pdf';
-    final outFile = File(outPath);
-    // If our pass produced a LARGER file than the original (rare, but possible
-    // for already-optimized PDFs), keep the original to avoid bloat.
     final finalBytes = bytes.length < original.length ? bytes : original;
-    await outFile.writeAsBytes(finalBytes);
-    return outPath;
+    return _writeOut(Uint8List.fromList(finalBytes), prefix: 'compressed');
   }
 
+  // ==========================================================================
+  // 5) PDF → IMAGE — rasterize each page as JPG
+  // ==========================================================================
+  /// Returns a list of file paths (one JPG per page) saved into a folder.
+  static Future<List<String>> pdfToImages(
+    File input, {
+    int dpi = 150,
+  }) async {
+    final bytes = await input.readAsBytes();
+    final outDir = await _outputDir();
+    final folder = Directory(
+      '${outDir.path}/pdf_pages_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    await folder.create(recursive: true);
+    final paths = <String>[];
+    var idx = 1;
+    await for (final page in Printing.raster(bytes, dpi: dpi.toDouble())) {
+      final pngBytes = await page.toPng();
+      final decoded = img.decodePng(pngBytes);
+      if (decoded == null) continue;
+      final jpg = img.encodeJpg(decoded, quality: 88);
+      final path = '${folder.path}/page_${idx.toString().padLeft(3, "0")}.jpg';
+      await File(path).writeAsBytes(jpg);
+      paths.add(path);
+      idx++;
+    }
+    return paths;
+  }
+
+  // ==========================================================================
+  // 6) PDF → WORD (.docx)
+  // Extracts text from PDF + writes a minimal valid .docx (text only).
+  // Formatting / images / tables NOT preserved — text fidelity only.
+  // ==========================================================================
+  static Future<String> pdfToWord(File input) async {
+    final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
+    final extractor = sf.PdfTextExtractor(doc);
+    final buf = StringBuffer();
+    for (var i = 0; i < doc.pages.count; i++) {
+      final pageText = extractor.extractText(startPageIndex: i, endPageIndex: i);
+      buf.writeln(pageText);
+      if (i < doc.pages.count - 1) buf.writeln();
+    }
+    doc.dispose();
+    final docxBytes = _buildMinimalDocx(buf.toString());
+    return _writeOut(
+      docxBytes,
+      prefix: 'pdf_to_word',
+      extension: 'docx',
+    );
+  }
+
+  // ==========================================================================
+  // 7) WORD (.docx) → PDF
+  // Parses document.xml from .docx zip, extracts text, renders to PDF.
+  // ==========================================================================
+  static Future<String> wordToPdf(File input) async {
+    final bytes = await input.readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    ArchiveFile? docFile;
+    for (final f in archive) {
+      if (f.name == 'word/document.xml') {
+        docFile = f;
+        break;
+      }
+    }
+    if (docFile == null) {
+      throw const FormatException('Not a valid .docx file (missing document.xml)');
+    }
+    final xml = String.fromCharCodes(docFile.content as List<int>);
+    // Crude but reliable text extraction: pull <w:t>…</w:t> bodies in order.
+    final text = _extractDocxText(xml);
+    if (text.trim().isEmpty) {
+      throw const FormatException('Document appears to be empty.');
+    }
+
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(40),
+        build: (ctx) {
+          return text
+              .split('\n')
+              .map((line) => pw.Paragraph(text: line.isEmpty ? ' ' : line))
+              .toList();
+        },
+      ),
+    );
+    return _writeOut(await doc.save(), prefix: 'word_to_pdf');
+  }
+
+  // ==========================================================================
+  // 8) LOCK PDF — add open/owner password protection
+  // ==========================================================================
+  static Future<String> lockPdf(File input, String password) async {
+    if (password.isEmpty) {
+      throw ArgumentError('Password cannot be empty.');
+    }
+    final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
+    final security = doc.security;
+    security.algorithm = sf.PdfEncryptionAlgorithm.aesx128Bit;
+    security.userPassword = password;
+    security.ownerPassword = password;
+    security.permissions.addAll([
+      sf.PdfPermissionsFlags.print,
+      sf.PdfPermissionsFlags.copyContent,
+    ]);
+    final bytes = await doc.save();
+    doc.dispose();
+    return _writeOut(Uint8List.fromList(bytes), prefix: 'locked');
+  }
+
+  // ==========================================================================
+  // helpers
+  // ==========================================================================
   static Future<Directory> _outputDir() async {
     final base = await getApplicationDocumentsDirectory();
     final out = Directory('${base.path}/PdfTools');
     if (!await out.exists()) await out.create(recursive: true);
     return out;
   }
+
+  static Future<String> _writeOut(
+    Uint8List bytes, {
+    required String prefix,
+    String extension = 'pdf',
+  }) async {
+    final outDir = await _outputDir();
+    final path =
+        '${outDir.path}/${prefix}_${DateTime.now().millisecondsSinceEpoch}.$extension';
+    await File(path).writeAsBytes(bytes);
+    return path;
+  }
+
+  static Uint8List _buildMinimalDocx(String text) {
+    String esc(String s) => s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+
+    final paragraphs = text.split('\n').map((line) {
+      return '<w:p><w:r><w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>';
+    }).join();
+
+    final documentXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>$paragraphs</w:body>
+</w:document>''';
+
+    const contentTypesXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>''';
+
+    const relsXml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>''';
+
+    final archive = Archive();
+    archive.addFile(ArchiveFile(
+      '[Content_Types].xml',
+      contentTypesXml.length,
+      contentTypesXml.codeUnits,
+    ));
+    archive.addFile(ArchiveFile(
+      '_rels/.rels',
+      relsXml.length,
+      relsXml.codeUnits,
+    ));
+    archive.addFile(ArchiveFile(
+      'word/document.xml',
+      documentXml.length,
+      documentXml.codeUnits,
+    ));
+
+    return Uint8List.fromList(ZipEncoder().encode(archive)!);
+  }
+
+  static String _extractDocxText(String xml) {
+    // Replace paragraph closes with newlines first so text() preserves breaks.
+    final withBreaks = xml
+        .replaceAll(RegExp(r'</w:p\s*>'), '\n')
+        .replaceAll(RegExp(r'<w:br\s*/>'), '\n')
+        .replaceAll(RegExp(r'<w:tab\s*/>'), '\t');
+
+    // Pull every <w:t ...>BODY</w:t> in document order.
+    final regex = RegExp(r'<w:t[^>]*>([^<]*)</w:t>');
+    final out = StringBuffer();
+    final lines = withBreaks.split('\n');
+    for (final line in lines) {
+      for (final m in regex.allMatches(line)) {
+        out.write(_unescapeXml(m.group(1) ?? ''));
+      }
+      out.writeln();
+    }
+    return out.toString();
+  }
+
+  static String _unescapeXml(String s) => s
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'");
 }

@@ -3,7 +3,12 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'image_to_pdf.dart';
 import 'merge_pdf.dart';
+import 'split_pdf.dart';
 import 'compress_pdf.dart';
+import 'pdf_to_image.dart';
+import 'pdf_to_word.dart';
+import 'word_to_pdf.dart';
+import 'lock_pdf.dart';
 import '../widgets/banner_ad_widget.dart';
 import '../services/ads_service.dart';
 
@@ -84,22 +89,52 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSpacing: 12,
               children: [
                 _ToolCard(
-                  icon: Icons.image,
-                  label: 'Image to PDF',
-                  color: Colors.blue,
-                  onTap: () => _open(const ImageToPdfScreen()),
-                ),
-                _ToolCard(
                   icon: Icons.merge_type,
                   label: 'Merge PDF',
                   color: Colors.green,
                   onTap: () => _open(const MergePdfScreen()),
                 ),
                 _ToolCard(
+                  icon: Icons.call_split,
+                  label: 'Split PDF',
+                  color: Colors.purple,
+                  onTap: () => _open(const SplitPdfScreen()),
+                ),
+                _ToolCard(
                   icon: Icons.compress,
                   label: 'Compress PDF',
                   color: Colors.orange,
                   onTap: () => _open(const CompressPdfScreen()),
+                ),
+                _ToolCard(
+                  icon: Icons.image,
+                  label: 'PDF to Image',
+                  color: Colors.teal,
+                  onTap: () => _open(const PdfToImageScreen()),
+                ),
+                _ToolCard(
+                  icon: Icons.photo_library,
+                  label: 'Image to PDF',
+                  color: Colors.blue,
+                  onTap: () => _open(const ImageToPdfScreen()),
+                ),
+                _ToolCard(
+                  icon: Icons.description,
+                  label: 'PDF to Word',
+                  color: Colors.indigo,
+                  onTap: () => _open(const PdfToWordScreen()),
+                ),
+                _ToolCard(
+                  icon: Icons.text_snippet,
+                  label: 'Word to PDF',
+                  color: Colors.brown,
+                  onTap: () => _open(const WordToPdfScreen()),
+                ),
+                _ToolCard(
+                  icon: Icons.lock,
+                  label: 'Lock PDF',
+                  color: Colors.redAccent,
+                  onTap: () => _open(const LockPdfScreen()),
                 ),
               ],
             ),
@@ -133,17 +168,17 @@ class _ToolCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 56, color: color),
-              const SizedBox(height: 12),
+              Icon(icon, size: 48, color: color),
+              const SizedBox(height: 10),
               Text(
                 label,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
               ),
