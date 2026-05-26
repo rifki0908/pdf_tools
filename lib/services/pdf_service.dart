@@ -199,7 +199,7 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 6) PDF → WORD (.docx) — line-by-line extract + spec-compliant docx
+  // 6) PDF → WORD (.docx) — line-by-line extract + bullet merge + glyph fix
   // ==========================================================================
   static Future<String> pdfToWord(File input) async {
     final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
@@ -207,15 +207,49 @@ class PdfService {
     final allLines = <String>[];
 
     for (var i = 0; i < doc.pages.count; i++) {
-      // extractTextLines preserves line ordering even with positioned text.
       final lines = extractor.extractTextLines(
         startPageIndex: i,
         endPageIndex: i,
       );
+
+      // First pass: clean each line.
+      final cleaned = <String>[];
       for (final line in lines) {
-        final t = line.text.trim();
-        if (t.isNotEmpty) allLines.add(t);
+        var t = line.text;
+        // Replace common Wingdings/private-use glyphs with their visual
+        // equivalents so the .docx renders with the right characters.
+        t = t
+            .replaceAll('\uF0B7', '\u2022')   // wingdings bullet -> •
+            .replaceAll('\uF0A7', '\u25AA')   // wingdings sq bullet -> ▪
+            .replaceAll('\uF076', '\u2713')   // wingdings check -> ✓
+            .replaceAll('\uF020', ' ')        // wingdings space -> normal space
+            .replaceAll('\u00A0', ' ');       // nbsp -> space
+        t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+        cleaned.add(t);
       }
+
+      // Second pass: merge orphan-bullet lines with the next text line.
+      // Pattern from Syncfusion: ['•', 'text content', ' '] -> '• text content'
+      final merged = <String>[];
+      var j = 0;
+      while (j < cleaned.length) {
+        final cur = cleaned[j];
+        // Bullet-only line followed by content -> combine.
+        if ((cur == '\u2022' || cur == '\u25AA' || cur == '\u2713') &&
+            j + 1 < cleaned.length &&
+            cleaned[j + 1].isNotEmpty &&
+            cleaned[j + 1] != '\u2022') {
+          merged.add('$cur ${cleaned[j + 1]}');
+          j += 2;
+          // Skip a trailing whitespace-only line (Wingdings \uf020 leftover).
+          if (j < cleaned.length && cleaned[j].isEmpty) j++;
+          continue;
+        }
+        if (cur.isNotEmpty) merged.add(cur);
+        j++;
+      }
+      allLines.addAll(merged);
+
       if (i < doc.pages.count - 1) {
         allLines.add(''); // page break marker
       }
