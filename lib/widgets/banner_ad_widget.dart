@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -17,17 +18,30 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
   @override
   void initState() {
     super.initState();
-    _ad = BannerAd(
-      adUnitId: AdsService.bannerUnitId,
-      size: AdSize.banner,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (_) {
-          if (mounted) setState(() => _loaded = true);
-        },
-        onAdFailedToLoad: (ad, _) => ad.dispose(),
-      ),
-    )..load();
+    _initBanner();
+  }
+
+  Future<void> _initBanner() async {
+    try {
+      await AdsService.ensureInitialized();
+      if (!mounted) return;
+      _ad = BannerAd(
+        adUnitId: AdsService.bannerUnitId,
+        size: AdSize.banner,
+        request: const AdRequest(),
+        listener: BannerAdListener(
+          onAdLoaded: (_) {
+            if (mounted) setState(() => _loaded = true);
+          },
+          onAdFailedToLoad: (ad, e) {
+            debugPrint('Banner fail: $e');
+            ad.dispose();
+          },
+        ),
+      )..load();
+    } catch (e) {
+      debugPrint('Banner init threw: $e');
+    }
   }
 
   @override
@@ -39,6 +53,7 @@ class _BannerAdWidgetState extends State<BannerAdWidget> {
   @override
   Widget build(BuildContext context) {
     if (!_loaded || _ad == null) {
+      // Reserve 50dp so the layout doesn't jump when the ad arrives.
       return const SizedBox(height: 50);
     }
     return SizedBox(
