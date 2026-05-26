@@ -20,7 +20,7 @@ dependencies:
   syncfusion_flutter_pdf: ^27.1.55
   archive: ^3.6.1
   open_filex: ^4.5.0
-  google_mobile_ads: ^5.2.0
+  google_mobile_ads: 5.1.0
 
 dev_dependencies:
   flutter_test:
