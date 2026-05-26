@@ -283,16 +283,9 @@ class PdfService {
         ));
       }
 
-      // Try to extract embedded images from this page.
-      try {
-        final page = doc.pages[i];
-        final images = page.extractImages();
-        for (final imgBytes in images) {
-          allItems.add(DocxItem.image(bytes: Uint8List.fromList(imgBytes)));
-        }
-      } catch (_) {
-        // extractImages may fail on some PDFs — skip silently.
-      }
+      // Image extraction: Syncfusion Flutter has no extractImages, so we
+      // skip embedded image extraction. The user gets text-only output;
+      // for full-fidelity (images preserved) they need a cloud converter.
 
       if (i < doc.pages.count - 1) {
         allItems.add(DocxItem.pageBreak());
