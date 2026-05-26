@@ -6,7 +6,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/pdf_service.dart';
-import '../widgets/banner_ad_widget.dart';
 
 class CompressPdfScreen extends StatefulWidget {
   const CompressPdfScreen({super.key});
@@ -244,7 +243,6 @@ class _CompressPdfScreenState extends State<CompressPdfScreen> {
               ],
             ),
           ),
-          const BannerAdWidget(),
         ],
       ),
     );

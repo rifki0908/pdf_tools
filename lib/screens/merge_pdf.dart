@@ -6,7 +6,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/pdf_service.dart';
-import '../widgets/banner_ad_widget.dart';
 
 class MergePdfScreen extends StatefulWidget {
   const MergePdfScreen({super.key});
@@ -178,7 +177,6 @@ class _MergePdfScreenState extends State<MergePdfScreen> {
               ],
             ),
           ),
-          const BannerAdWidget(),
         ],
       ),
     );

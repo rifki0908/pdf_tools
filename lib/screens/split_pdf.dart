@@ -6,7 +6,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/pdf_service.dart';
-import '../widgets/banner_ad_widget.dart';
 
 class SplitPdfScreen extends StatefulWidget {
   const SplitPdfScreen({super.key});
@@ -217,7 +216,6 @@ class _SplitPdfScreenState extends State<SplitPdfScreen> {
               ],
             ),
           ),
-          const BannerAdWidget(),
         ],
       ),
     );

@@ -6,7 +6,6 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/pdf_service.dart';
-import '../widgets/banner_ad_widget.dart';
 
 class PdfToWordScreen extends StatefulWidget {
   const PdfToWordScreen({super.key});
@@ -179,7 +178,6 @@ class _PdfToWordScreenState extends State<PdfToWordScreen> {
               ],
             ),
           ),
-          const BannerAdWidget(),
         ],
       ),
     );
