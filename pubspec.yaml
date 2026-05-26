@@ -1,0 +1,31 @@
+name: pdf_tools
+description: Universal PDF utilities — Image to PDF, Merge PDF, Compress PDF.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  file_picker: ^8.1.4
+  image_picker: ^1.1.2
+  path_provider: ^2.1.5
+  permission_handler: ^11.3.1
+  share_plus: ^10.1.2
+  pdf: ^3.11.1
+  syncfusion_flutter_pdf: ^27.1.55
+  open_filex: ^4.5.0
+  google_mobile_ads: ^5.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
