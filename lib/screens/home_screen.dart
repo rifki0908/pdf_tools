@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'image_to_pdf.dart';
 import 'merge_pdf.dart';
@@ -9,65 +8,14 @@ import 'pdf_to_image.dart';
 import 'pdf_to_word.dart';
 import 'word_to_pdf.dart';
 import 'lock_pdf.dart';
-import '../widgets/banner_ad_widget.dart';
-import '../services/ads_service.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  InterstitialAd? _interstitial;
-
-  @override
-  void initState() {
-    super.initState();
-    AdsService.loadInterstitial(
-      onLoaded: (ad) => setState(() => _interstitial = ad),
+  void _open(BuildContext context, Widget destination) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => destination),
     );
-  }
-
-  @override
-  void dispose() {
-    _interstitial?.dispose();
-    super.dispose();
-  }
-
-  void _open(Widget destination) {
-    final ad = _interstitial;
-    if (ad != null) {
-      ad.fullScreenContentCallback = FullScreenContentCallback(
-        onAdDismissedFullScreenContent: (ad) {
-          ad.dispose();
-          _interstitial = null;
-          AdsService.loadInterstitial(
-            onLoaded: (next) => setState(() => _interstitial = next),
-          );
-          if (mounted) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => destination),
-            );
-          }
-        },
-        onAdFailedToShowFullScreenContent: (ad, _) {
-          ad.dispose();
-          _interstitial = null;
-          if (mounted) {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => destination),
-            );
-          }
-        },
-      );
-      ad.show();
-    } else {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => destination),
-      );
-    }
   }
 
   @override
@@ -79,67 +27,60 @@ class _HomeScreenState extends State<HomeScreen> {
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
-      body: Column(
+      body: GridView.count(
+        padding: const EdgeInsets.all(16),
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
         children: [
-          Expanded(
-            child: GridView.count(
-              padding: const EdgeInsets.all(16),
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              children: [
-                _ToolCard(
-                  icon: Icons.merge_type,
-                  label: 'Merge PDF',
-                  color: Colors.green,
-                  onTap: () => _open(const MergePdfScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.call_split,
-                  label: 'Split PDF',
-                  color: Colors.purple,
-                  onTap: () => _open(const SplitPdfScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.compress,
-                  label: 'Compress PDF',
-                  color: Colors.orange,
-                  onTap: () => _open(const CompressPdfScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.image,
-                  label: 'PDF to Image',
-                  color: Colors.teal,
-                  onTap: () => _open(const PdfToImageScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.photo_library,
-                  label: 'Image to PDF',
-                  color: Colors.blue,
-                  onTap: () => _open(const ImageToPdfScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.description,
-                  label: 'PDF to Word',
-                  color: Colors.indigo,
-                  onTap: () => _open(const PdfToWordScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.text_snippet,
-                  label: 'Word to PDF',
-                  color: Colors.brown,
-                  onTap: () => _open(const WordToPdfScreen()),
-                ),
-                _ToolCard(
-                  icon: Icons.lock,
-                  label: 'Lock PDF',
-                  color: Colors.redAccent,
-                  onTap: () => _open(const LockPdfScreen()),
-                ),
-              ],
-            ),
+          _ToolCard(
+            icon: Icons.merge_type,
+            label: 'Merge PDF',
+            color: Colors.green,
+            onTap: () => _open(context, const MergePdfScreen()),
           ),
-          const BannerAdWidget(),
+          _ToolCard(
+            icon: Icons.call_split,
+            label: 'Split PDF',
+            color: Colors.purple,
+            onTap: () => _open(context, const SplitPdfScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.compress,
+            label: 'Compress PDF',
+            color: Colors.orange,
+            onTap: () => _open(context, const CompressPdfScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.image,
+            label: 'PDF to Image',
+            color: Colors.teal,
+            onTap: () => _open(context, const PdfToImageScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.photo_library,
+            label: 'Image to PDF',
+            color: Colors.blue,
+            onTap: () => _open(context, const ImageToPdfScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.description,
+            label: 'PDF to Word',
+            color: Colors.indigo,
+            onTap: () => _open(context, const PdfToWordScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.text_snippet,
+            label: 'Word to PDF',
+            color: Colors.brown,
+            onTap: () => _open(context, const WordToPdfScreen()),
+          ),
+          _ToolCard(
+            icon: Icons.lock,
+            label: 'Lock PDF',
+            color: Colors.redAccent,
+            onTap: () => _open(context, const LockPdfScreen()),
+          ),
         ],
       ),
     );

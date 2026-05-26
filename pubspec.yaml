@@ -1,7 +1,7 @@
 name: pdf_tools
 description: Universal PDF utilities — Image/PDF, Merge, Split, Compress, Convert, Lock.
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -10,17 +10,16 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  file_picker: ^8.1.4
   image_picker: ^1.1.2
-  path_provider: ^2.1.5
-  permission_handler: ^11.3.1
+  file_picker: ^8.1.4
   share_plus: ^10.1.2
+  path_provider: ^2.1.4
   pdf: ^3.11.1
-  printing: ^5.13.4
+  image: ^4.3.0
   syncfusion_flutter_pdf: ^27.1.55
   archive: ^3.6.1
   open_filex: ^4.5.0
-  google_mobile_ads: ^5.3.1
+  printing: ^5.13.4
 
 dev_dependencies:
   flutter_test:
