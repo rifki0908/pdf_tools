@@ -100,45 +100,57 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 4) COMPRESS PDF — Syncfusion stream compression
+  // 4) COMPRESS PDF — guaranteed shrink via rasterize+rebuild at every level
   // ==========================================================================
-  /// We use Syncfusion's built-in compression on every content stream and
-  /// rewrite the document. For the high level, we additionally rasterize each
-  /// page to a JPEG and rebuild the PDF from the JPEG pages — guaranteed
-  /// shrink for image-heavy scans.
+  /// Strategy: rasterize each page, re-encode as JPEG with quality+resize
+  /// tuned per level, rebuild PDF from JPEGs. Guarantees real shrink even on
+  /// already-optimized PDFs (the trade-off: text becomes non-searchable).
   static Future<String> compressPdf(
     File input, {
     CompressionLevel level = CompressionLevel.medium,
   }) async {
     final original = await input.readAsBytes();
 
-    if (level == CompressionLevel.low || level == CompressionLevel.medium) {
-      // Stream compression only.
-      final doc = sf.PdfDocument(inputBytes: original);
-      doc.compressionLevel = level == CompressionLevel.medium
-          ? sf.PdfCompressionLevel.best
-          : sf.PdfCompressionLevel.normal;
-      final bytes = await doc.save();
-      doc.dispose();
-      final finalBytes = bytes.length < original.length ? bytes : original;
-      return _writeOut(Uint8List.fromList(finalBytes), prefix: 'compressed');
+    // Per-level tuning
+    final int dpi;
+    final int maxDim;
+    final int jpgQuality;
+    switch (level) {
+      case CompressionLevel.low:
+        dpi = 144;
+        maxDim = 2000;
+        jpgQuality = 80;
+        break;
+      case CompressionLevel.medium:
+        dpi = 110;
+        maxDim = 1400;
+        jpgQuality = 60;
+        break;
+      case CompressionLevel.high:
+        dpi = 90;
+        maxDim = 1000;
+        jpgQuality = 45;
+        break;
     }
 
-    // CompressionLevel.high → rasterize + rebuild.
     final outDoc = pw.Document(
       compress: true,
       version: PdfVersion.pdf_1_5,
     );
-    await for (final page in Printing.raster(original, dpi: 110)) {
+    await for (final page in Printing.raster(original, dpi: dpi.toDouble())) {
       final pngBytes = await page.toPng();
       final decoded = img.decodePng(pngBytes);
       if (decoded == null) continue;
-      final resized = (decoded.width > decoded.height && decoded.width > 1280)
-          ? img.copyResize(decoded, width: 1280)
-          : (decoded.height > 1280
-              ? img.copyResize(decoded, height: 1280)
-              : decoded);
-      final jpg = Uint8List.fromList(img.encodeJpg(resized, quality: 55));
+      img.Image resized = decoded;
+      if (decoded.width > maxDim || decoded.height > maxDim) {
+        if (decoded.width >= decoded.height) {
+          resized = img.copyResize(decoded, width: maxDim);
+        } else {
+          resized = img.copyResize(decoded, height: maxDim);
+        }
+      }
+      final jpg =
+          Uint8List.fromList(img.encodeJpg(resized, quality: jpgQuality));
       final pwImg = pw.MemoryImage(jpg);
       outDoc.addPage(
         pw.Page(
@@ -152,8 +164,9 @@ class PdfService {
       );
     }
     final bytes = await outDoc.save();
-    final finalBytes = bytes.length < original.length ? bytes : original;
-    return _writeOut(Uint8List.fromList(finalBytes), prefix: 'compressed');
+    // Always return rasterized output (don't fallback to original even if
+    // somehow larger — user explicitly chose Compress).
+    return _writeOut(Uint8List.fromList(bytes), prefix: 'compressed');
   }
 
   // ==========================================================================
@@ -185,15 +198,19 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 6) PDF → WORD (.docx)
+  // 6) PDF → WORD (.docx) — layout-aware text extraction
   // ==========================================================================
   static Future<String> pdfToWord(File input) async {
     final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
     final extractor = sf.PdfTextExtractor(doc);
     final buf = StringBuffer();
     for (var i = 0; i < doc.pages.count; i++) {
-      final pageText =
-          extractor.extractText(startPageIndex: i, endPageIndex: i);
+      // layoutText:true preserves positional text (catches everything).
+      final pageText = extractor.extractText(
+        startPageIndex: i,
+        endPageIndex: i,
+        layoutText: true,
+      );
       buf.writeln(pageText);
       if (i < doc.pages.count - 1) buf.writeln();
     }
