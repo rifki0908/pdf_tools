@@ -35,14 +35,24 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 2) MERGE PDF
+  // 2) MERGE PDF — page-by-page template copy
   // ==========================================================================
   static Future<String> mergePdfs(List<File> pdfs) async {
     final merged = sf.PdfDocument();
     for (final f in pdfs) {
-      final source = sf.PdfDocument(inputBytes: await f.readAsBytes());
-      sf.PdfDocumentBase.merge(merged, [source]);
-      source.dispose();
+      final src = sf.PdfDocument(inputBytes: await f.readAsBytes());
+      for (var i = 0; i < src.pages.count; i++) {
+        final srcPage = src.pages[i];
+        final template = srcPage.createTemplate();
+        final size = srcPage.size;
+        final newPage = merged.pages.add();
+        newPage.graphics.drawPdfTemplate(
+          template,
+          Offset.zero,
+          Size(size.width, size.height),
+        );
+      }
+      src.dispose();
     }
     final bytes = await merged.save();
     merged.dispose();
@@ -52,11 +62,8 @@ class PdfService {
   // ==========================================================================
   // 3) SPLIT PDF — extract a page range into a new PDF
   // ==========================================================================
-  /// Splits the input PDF and returns a new PDF containing only the pages in
-  /// the inclusive range [startPage, endPage]. Pages are 1-indexed.
   static Future<String> splitPdf(File input, int startPage, int endPage) async {
-    final bytes = await input.readAsBytes();
-    final src = sf.PdfDocument(inputBytes: bytes);
+    final src = sf.PdfDocument(inputBytes: await input.readAsBytes());
     final total = src.pages.count;
     if (startPage < 1 || endPage > total || startPage > endPage) {
       src.dispose();
@@ -64,7 +71,6 @@ class PdfService {
         'Invalid range: $startPage–$endPage (PDF has $total pages).',
       );
     }
-
     final newDoc = sf.PdfDocument();
     for (var i = startPage - 1; i <= endPage - 1; i++) {
       final srcPage = src.pages[i];
@@ -77,16 +83,15 @@ class PdfService {
         Size(size.width, size.height),
       );
     }
-    final outBytes = await newDoc.save();
+    final bytes = await newDoc.save();
     newDoc.dispose();
     src.dispose();
     return _writeOut(
-      Uint8List.fromList(outBytes),
+      Uint8List.fromList(bytes),
       prefix: 'split_${startPage}-$endPage',
     );
   }
 
-  /// Returns the page count of a PDF — useful for the split UI.
   static Future<int> pageCount(File input) async {
     final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
     final n = doc.pages.count;
@@ -95,50 +100,58 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 4) COMPRESS PDF — Syncfusion stream compression + image re-encoding
+  // 4) COMPRESS PDF — Syncfusion stream compression
   // ==========================================================================
+  /// We use Syncfusion's built-in compression on every content stream and
+  /// rewrite the document. For the high level, we additionally rasterize each
+  /// page to a JPEG and rebuild the PDF from the JPEG pages — guaranteed
+  /// shrink for image-heavy scans.
   static Future<String> compressPdf(
     File input, {
     CompressionLevel level = CompressionLevel.medium,
   }) async {
     final original = await input.readAsBytes();
-    final doc = sf.PdfDocument(inputBytes: original);
-    doc.compressionLevel = sf.PdfCompressionLevel.best;
 
-    final imgQuality = switch (level) {
-      CompressionLevel.low => 88,
-      CompressionLevel.medium => 65,
-      CompressionLevel.high => 40,
-    };
-    final maxLongEdge = switch (level) {
-      CompressionLevel.low => 1800,
-      CompressionLevel.medium => 1280,
-      CompressionLevel.high => 960,
-    };
-
-    for (var i = 0; i < doc.pages.count; i++) {
-      final page = doc.pages[i];
-      final extractor = sf.PdfImageExtractor(doc);
-      final extracted = extractor.extractImages(i);
-      if (extracted == null || extracted.isEmpty) continue;
-      for (var j = 0; j < extracted.length; j++) {
-        try {
-          final src = img.decodeImage(extracted[j]);
-          if (src == null) continue;
-          final resized = (src.width > src.height && src.width > maxLongEdge)
-              ? img.copyResize(src, width: maxLongEdge)
-              : (src.height > maxLongEdge
-                  ? img.copyResize(src, height: maxLongEdge)
-                  : src);
-          final encoded = Uint8List.fromList(
-            img.encodeJpg(resized, quality: imgQuality),
-          );
-          page.replaceImage(j, sf.PdfBitmap(encoded));
-        } catch (_) {}
-      }
+    if (level == CompressionLevel.low || level == CompressionLevel.medium) {
+      // Stream compression only.
+      final doc = sf.PdfDocument(inputBytes: original);
+      doc.compressionLevel = level == CompressionLevel.medium
+          ? sf.PdfCompressionLevel.best
+          : sf.PdfCompressionLevel.normal;
+      final bytes = await doc.save();
+      doc.dispose();
+      final finalBytes = bytes.length < original.length ? bytes : original;
+      return _writeOut(Uint8List.fromList(finalBytes), prefix: 'compressed');
     }
-    final bytes = await doc.save();
-    doc.dispose();
+
+    // CompressionLevel.high → rasterize + rebuild.
+    final outDoc = pw.Document(
+      compress: true,
+      version: PdfVersion.pdf_1_5,
+    );
+    await for (final page in Printing.raster(original, dpi: 110)) {
+      final pngBytes = await page.toPng();
+      final decoded = img.decodePng(pngBytes);
+      if (decoded == null) continue;
+      final resized = (decoded.width > decoded.height && decoded.width > 1280)
+          ? img.copyResize(decoded, width: 1280)
+          : (decoded.height > 1280
+              ? img.copyResize(decoded, height: 1280)
+              : decoded);
+      final jpg = Uint8List.fromList(img.encodeJpg(resized, quality: 55));
+      final pwImg = pw.MemoryImage(jpg);
+      outDoc.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat(
+            resized.width.toDouble(),
+            resized.height.toDouble(),
+          ),
+          margin: pw.EdgeInsets.zero,
+          build: (ctx) => pw.Image(pwImg, fit: pw.BoxFit.fill),
+        ),
+      );
+    }
+    final bytes = await outDoc.save();
     final finalBytes = bytes.length < original.length ? bytes : original;
     return _writeOut(Uint8List.fromList(finalBytes), prefix: 'compressed');
   }
@@ -146,7 +159,6 @@ class PdfService {
   // ==========================================================================
   // 5) PDF → IMAGE — rasterize each page as JPG
   // ==========================================================================
-  /// Returns a list of file paths (one JPG per page) saved into a folder.
   static Future<List<String>> pdfToImages(
     File input, {
     int dpi = 150,
@@ -174,30 +186,24 @@ class PdfService {
 
   // ==========================================================================
   // 6) PDF → WORD (.docx)
-  // Extracts text from PDF + writes a minimal valid .docx (text only).
-  // Formatting / images / tables NOT preserved — text fidelity only.
   // ==========================================================================
   static Future<String> pdfToWord(File input) async {
     final doc = sf.PdfDocument(inputBytes: await input.readAsBytes());
     final extractor = sf.PdfTextExtractor(doc);
     final buf = StringBuffer();
     for (var i = 0; i < doc.pages.count; i++) {
-      final pageText = extractor.extractText(startPageIndex: i, endPageIndex: i);
+      final pageText =
+          extractor.extractText(startPageIndex: i, endPageIndex: i);
       buf.writeln(pageText);
       if (i < doc.pages.count - 1) buf.writeln();
     }
     doc.dispose();
     final docxBytes = _buildMinimalDocx(buf.toString());
-    return _writeOut(
-      docxBytes,
-      prefix: 'pdf_to_word',
-      extension: 'docx',
-    );
+    return _writeOut(docxBytes, prefix: 'pdf_to_word', extension: 'docx');
   }
 
   // ==========================================================================
   // 7) WORD (.docx) → PDF
-  // Parses document.xml from .docx zip, extracts text, renders to PDF.
   // ==========================================================================
   static Future<String> wordToPdf(File input) async {
     final bytes = await input.readAsBytes();
@@ -210,15 +216,15 @@ class PdfService {
       }
     }
     if (docFile == null) {
-      throw const FormatException('Not a valid .docx file (missing document.xml)');
+      throw const FormatException(
+        'Not a valid .docx file (missing document.xml)',
+      );
     }
     final xml = String.fromCharCodes(docFile.content as List<int>);
-    // Crude but reliable text extraction: pull <w:t>…</w:t> bodies in order.
     final text = _extractDocxText(xml);
     if (text.trim().isEmpty) {
       throw const FormatException('Document appears to be empty.');
     }
-
     final doc = pw.Document();
     doc.addPage(
       pw.MultiPage(
@@ -236,7 +242,7 @@ class PdfService {
   }
 
   // ==========================================================================
-  // 8) LOCK PDF — add open/owner password protection
+  // 8) LOCK PDF — AES-128 password protection
   // ==========================================================================
   static Future<String> lockPdf(File input, String password) async {
     if (password.isEmpty) {
@@ -326,13 +332,11 @@ class PdfService {
   }
 
   static String _extractDocxText(String xml) {
-    // Replace paragraph closes with newlines first so text() preserves breaks.
     final withBreaks = xml
         .replaceAll(RegExp(r'</w:p\s*>'), '\n')
         .replaceAll(RegExp(r'<w:br\s*/>'), '\n')
         .replaceAll(RegExp(r'<w:tab\s*/>'), '\t');
 
-    // Pull every <w:t ...>BODY</w:t> in document order.
     final regex = RegExp(r'<w:t[^>]*>([^<]*)</w:t>');
     final out = StringBuffer();
     final lines = withBreaks.split('\n');
